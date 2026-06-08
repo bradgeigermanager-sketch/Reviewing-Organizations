@@ -1,0 +1,65 @@
+To maintain a scalable Atomic Library, you must treat your schemas as a version-controlled, hierarchical asset repository. Managing multiple external organizations requires a structure that allows for inheritance (shared standards) and specialization (organization-specific deviations).
+1. The Directory Structure: "The Atomic Tree"
+Organize your library by functional domain rather than by organization. This prevents redundancy; if two organizations share a common data point (e.g., Person node), you define that schema once and reference it across multiple organization folders.
+/atomic-library
+  /schemas
+    /base_types         # Universal objects (Person, Asset, Location)
+    /organizations      # Org-specific overrides
+      /org_a
+        mapping.json    # The field-renaming dict
+        schema.json     # The jsonschema contract
+      /org_b
+        mapping.json
+        schema.json
+  /templates            # Jinja2 templates for transformation
+  /scripts              # The shared ingestion pipeline core
+
+
+2. Using $ref for Schema Composition
+The jsonschema library supports a powerful feature called $ref, which allows you to compose complex schemas from simpler, reusable components. Instead of rewriting a Person schema for every organization, define it once in /base_types and import it.
+Example: Organization-Specific Schema (org_a/schema.json)
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "allOf": [
+    { "$ref": "../../base_types/person.json" },
+    {
+      "properties": {
+        "org_a_specific_clearance": { "type": "string" }
+      }
+    }
+  ]
+}
+
+
+3. The Centralized Schema Registry
+Create a Python "Registry" class. This class acts as a single point of truth that loads the appropriate schemas and mappings based on the incoming data's metadata. This keeps your pipeline code clean and decoupled from your data assets.
+import json
+import os
+
+class SchemaRegistry:
+    def __init__(self, library_path):
+        self.library_path = library_path
+
+    def get_schema(self, org_id):
+        path = os.path.join(self.library_path, "organizations", org_id, "schema.json")
+        with open(path, 'r') as f:
+            return json.load(f)
+
+    def get_mapping(self, org_id):
+        path = os.path.join(self.library_path, "organizations", org_id, "mapping.json")
+        with open(path, 'r') as f:
+            return json.load(f)
+
+# Usage in pipeline
+registry = SchemaRegistry("./atomic-library")
+schema = registry.get_schema("org_a")
+mapper = registry.get_mapping("org_a")
+
+
+4. Implementation Strategy: The "Three-Gate" Process
+To effectively manage this at scale, enforce this workflow for every new organization you onboard:
+Map: Create the mapping.json to normalize their unique field names.
+Contract: Write the schema.json to define what valid data looks like for that source, using $ref to import existing base types.
+Test: Run a "Regression Test" suite—a small library of sample records (both valid and intentionally invalid) to ensure your new schema correctly accepts good data and routes bad data to your error sink.
+Key insight: By modularizing your library with $ref, you turn schema maintenance from a manual, error-prone task into a configuration-driven process. When an organization updates their procedures, you only update one file in their specific folder; the rest of your system—and its core logic—remains untouched and reliable.
+
