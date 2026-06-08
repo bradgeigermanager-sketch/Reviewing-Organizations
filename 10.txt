@@ -1,0 +1,34 @@
+To audit and correct data based on mapping versions, your Cypher queries must leverage the metadata you embedded during the ingestion pipeline. Assuming you tagged each node with an ingestion_version property during the load, you can perform precise audits.
+1. Identifying Impacted Nodes
+This query isolates every node created by a specific, potentially erroneous version of a mapping file. This is your primary diagnostic tool to scope the "blast radius" of a bad mapping.
+// Identify all nodes impacted by a specific version
+MATCH (n)
+WHERE n.ingestion_version = 'v1.0.2'
+RETURN n.identifier AS ID, labels(n) AS Type, n.last_updated AS UpdatedAt
+ORDER BY UpdatedAt DESC
+
+
+2. Identifying Structural Drift (Cross-Version Comparison)
+If you suspect that v1.0.2 mislabeled a property (e.g., mapped "Client_Ref" to the wrong field), you can compare it against the "Golden Standard" (v2.0.0) to spot the discrepancies.
+// Compare two versions to find property discrepancies
+MATCH (n1:Entity {ingestion_version: 'v1.0.2'})
+MATCH (n2:Entity {identifier: n1.identifier, ingestion_version: 'v2.0.0'})
+WHERE n1.field_of_interest <> n2.field_of_interest
+RETURN n1.identifier AS ID, n1.field_of_interest AS Version1Value, n2.field_of_interest AS Version2Value
+
+
+3. Automated Correction Workflow
+Once the faulty nodes are identified, you don't need to delete the entire database. You can perform a "Re-Mapping Patch" directly within Neo4j. This updates the faulty property and bumps the ingestion_version so your audit logs stay current.
+// Patch nodes and update the version tag
+MATCH (n:Entity {ingestion_version: 'v1.0.2'})
+SET n.field_of_interest = n.corrected_field,
+    n.ingestion_version = 'v1.0.2_PATCHED',
+    n.audit_note = 'Corrected mapping error detected in v1.0.2'
+RETURN count(n) AS NodesCorrected
+
+
+Strategic Audit Principles
+The Audit Log Node: Instead of just properties, consider creating a LogNode in your graph that records the ingestion event. Connect EntityNode to LogNode via an INGESTED_VIA edge. This allows you to query the entire history of an entity’s data transformation rather than just its current state.
+The "Burned" Flag: If an ingestion version is found to be disastrous, use a query to mark those nodes with a temporary property, n.status = 'PENDING_REVIEW'. This allows you to filter them out of your analytics dashboards until they are corrected, ensuring your SIS reporting remains accurate even while audits are underway.
+Key insight: By treating your graph nodes as versioned artifacts, you remove the risk of "dirty data" being permanent. Every error is just a solvable query away from correction, and your ingestion_version tag provides the forensic trail needed to maintain complete organizational transparency.
+
