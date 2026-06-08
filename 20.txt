@@ -1,0 +1,35 @@
+To design a Grafana dashboard for your Risk-Efficiency matrix, you must translate your graph database nodes into a coordinate-based scatter plot. Grafana, while traditionally a time-series tool, excels at this using the Scatter Plot panel and the Neo4j Datasource Plugin.
+1. Dashboard Architecture: The Scatter Plot
+The scatter plot is the ideal visualization for a Risk vs. Efficiency matrix because it allows you to see the "density" of shortcuts in specific quadrants.
+X-Axis: Efficiency Gain (Time saved).
+Y-Axis: Risk Weight (Policy impact).
+Data Points: Individual :SHORTCUT_FLAG instances.
+Quadrant Lines: Use Grafana's "Thresholds" or "Annotations" to draw a horizontal line at your average risk threshold and a vertical line at your average efficiency threshold, creating the visual quadrants (Liability, Innovation, etc.).
+2. The Data-Fetch Query
+Grafana requires a tabular return format. Your Cypher query should return coordinates for every flagged shortcut:
+// Grafana Query for Scatter Plot
+MATCH (a:ProcessNode)-[f:SHORTCUT_FLAG]->(b:ProcessNode)
+WITH f, 
+     (f.golden_path_duration - f.shortcut_duration) AS efficiency_gain,
+     CASE f.bypassed_step_type 
+        WHEN 'Legal' THEN 10 
+        WHEN 'PeerReview' THEN 5 
+        ELSE 1 END AS risk_weight
+RETURN efficiency_gain AS x, 
+       risk_weight AS y, 
+       f.audit_note AS tooltip_label,
+       f.version AS version
+
+
+3. Implementing the "Review" Workflow
+A dashboard should do more than show data—it should facilitate action.
+Dashboard Table Panel: Below the scatter plot, add a "Table" panel. Configure the query to return all shortcuts currently in the High Risk quadrant. Enable "Data Links" so clicking a row in the table opens the specific sub-graph in Neo4j Bloom, allowing the auditor to investigate the "Why."
+Filtering by Version: Add a Grafana "Dashboard Variable" for mapping_version. This allows your auditor to toggle the view to compare historical versions of the matrix, seeing if policy changes have shifted shortcuts from the "Liability" quadrant to the "Innovation" quadrant over time.
+Alerting: Set up a Grafana Alert rule: "If any data point appears in Quadrant I (High Risk/Low Efficiency), send a Slack/Email notification to the Audit Team."
+4. Strategic Integration: The SIS Dashboard
+To keep your dashboard aligned with your Atomic Library:
+Standardized Queries: Save the Cypher queries used for the dashboard in your library’s /reports/grafana/ directory. If you change your risk scoring logic, you only update the query in the library, and the dashboard updates automatically.
+Versioning: Just like your schemas, version your Grafana dashboards. Export the dashboard JSON and commit it to your Git repository. This ensures that your auditing framework is as reproducible as your ingestion code.
+Color-Coding by Quadrant: Use Grafana’s "Overrides" feature to automatically color dots in the "Liability" zone red and "Innovation" zone green. This makes the dashboard actionable at a glance—auditors know exactly where to start their day.
+Key insight: The Grafana dashboard is your "Command Center." By mapping your graph data into an X/Y scatter plot, you move the audit from the realm of "searching for problems" to the realm of "visual management," where policy deviance is prioritized by its tangible impact on organizational risk and efficiency.
+
