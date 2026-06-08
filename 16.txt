@@ -1,0 +1,46 @@
+To automate the detection of policy shortcuts, you need to treat your organizational workflow as a Directed Acyclic Graph (DAG). When a process flow deviates from the "Golden Path" (the formal, authorized sequence), your pipeline must trigger a flag.
+1. Defining the "Golden Path"
+In your Atomic Library, you must maintain a set of FlowTemplates that define what a compliant process looks like. A "Shortcut" edge is defined as any transition that is not explicitly present in these templates.
+2. The Automated Auditor Pipeline
+This pipeline runs as a scheduled task (e.g., via apoc.periodic.repeat or a CI/CD cron job). It performs a "Differential Analysis": it compares the actual flows found in your data against the authorized template.
+// 1. Identify all authorized paths (The Golden Path)
+MATCH (start:ProcessNode)-[:AUTHORIZED_FLOW*]->(end:ProcessNode)
+WITH collect(start.name + '->' + end.name) AS GoldenPaths
+
+// 2. Identify all actual observed paths
+MATCH (a:ProcessNode)-[f:FLOW]->(b:ProcessNode)
+WHERE NOT (a.name + '->' + b.name) IN GoldenPaths
+
+// 3. Flag the shortcut for review
+SET f:SHORTCUT_FLAG,
+    f.detected_at = datetime(),
+    f.audit_note = 'Transition violates authorized process flow'
+RETURN f, a.name, b.name
+
+
+3. Pipeline Integration Architecture
+To make this "production-grade," integrate this audit directly into your ingestion process.
+Ingestion Stage: Each new record builds the FLOW relationships.
+Audit Stage: Immediately after a record is ingested, run the "Differential Analysis" query.
+Flagging Stage: If the query returns a result, create a LogNode linked to the shortcut edge and assign it the :NEEDS_REVIEW label.
+Reporting Sink: Output the flagged edges to a flagged_shortcuts.json report in your error sink directory, providing the forensic evidence (Entity ID, Performer, and Shortcut Path) for human auditors.
+4. Strategic "Shortcut" Classification
+Not all shortcuts are equal. Your audit pipeline should classify them based on Risk Vectors:
+Efficiency Shortcut: The shortcut skips a step but results in a successful outcome. (Flag for: Policy Revision)
+Compromise Shortcut: The shortcut skips a mandatory validation check. (Flag for: Immediate Remediation)
+Ghost Path: The shortcut utilizes a non-existent process node. (Flag for: System Error/Mapping Failure)
+5. Managing the Library of Shortcuts
+To keep this manageable, store your authorized paths in a machine-readable format. This allows your audit pipeline to dynamically load "authorized flows" for different departments.
+// authorized_flows.json (Stored in /atomic-library/schemas/)
+{
+  "department": "procurement",
+  "valid_transitions": [
+    {"from": "Request", "to": "Approval"},
+    {"from": "Approval", "to": "Fulfillment"}
+  ]
+}
+
+
+By referencing this JSON during your audit pipeline, you ensure that as policies change, you only update the JSON file, not the complex Cypher auditing logic.
+Key insight: A self-flagging system removes the need for manual monitoring. By framing policy compliance as a pattern-matching problem in a graph, you shift from reacting to policy failures to quantifying them in real-time.
+
