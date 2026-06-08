@@ -1,0 +1,37 @@
+To design an effective Neo4j Bloom dashboard for reviewing flagged shortcuts, you must prioritize contextual triage. An auditor does not just need to see the "shortcut" edge; they need to see the entire workflow path that led to that shortcut to understand the intent and risk.
+1. Defining the "Audit Perspective"
+In Bloom, a "Perspective" is a curated view of your graph. Create an "Audit Review" perspective that hides unnecessary clutter and highlights the flags.
+Category Styling:
+Flagged Shortcuts: Style [:SHORTCUT_FLAG] edges as bright red, dashed lines.
+Flagged Entities: Style nodes with the :NEEDS_REVIEW label with a distinct icon (e.g., a warning triangle) and a red border.
+Authorized Paths: Keep these gray or muted blue to provide visual contrast.
+Search Phrases: Create a custom Search Phrase called "Review shortcuts." Set the Cypher for this phrase to:
+MATCH p=(a:ProcessNode)-[f:SHORTCUT_FLAG]->(b:ProcessNode)
+RETURN p
+
+
+2. The Dashboard Layout
+Design your Bloom dashboard to move the auditor from "Detection" to "Disposition" efficiently:
+Inspector Panel (The Detail View): Configure the Inspector to automatically show the audit_note, detected_at, and mapping_version when a shortcut is clicked. This ensures the auditor has the forensic metadata immediately.
+Property Panels: Use the "Property Panel" feature to display the LogNode chain count. If a shortcut is part of a chain with many log entries, the auditor knows it is a complex, high-history workflow.
+3. Workflow: From Flag to Resolution
+Design the dashboard to support a clear decision-making loop:
+Spot: The auditor opens Bloom and clicks "Review shortcuts."
+Investigate: Bloom visualizes the shortcut node and the surrounding ProcessNodes.
+Action: Use a Bloom "Action" (a button that executes a Cypher write) to update the status of the flag.
+The Disposition Action (Add to Bloom Action/Script):
+// Update the flag status so it disappears from the review dashboard
+MATCH (f:SHORTCUT_FLAG) 
+WHERE id(f) = $edgeId
+SET f:REVIEWED, 
+    f.reviewed_at = datetime(),
+    f.auditor_notes = $notes
+REMOVE f:SHORTCUT_FLAG
+
+
+4. Strategic Integration with the SIS
+The "Clearance" Status: As soon as an edge is labeled :REVIEWED, it should automatically vanish from your "Shortcuts to Review" query. This provides the auditor with a "Clean Slate" experience, which is essential for high-volume auditing.
+Filter by Risk: Create a Bloom filter that allows the auditor to toggle visibility by RiskVector (e.g., "Show only Compromise Shortcuts"). This allows them to triage high-risk security failures before looking at efficiency shortcuts.
+Drill-Down Links: If your Bloom instance is integrated with your internal web app, add a URL property to the shortcut edge that links to the specific "Policy Documentation" or "Standard Operating Procedure" that the edge bypassed.
+Key insight: The goal of a Bloom audit dashboard is to reduce the "Cognitive Load" of the auditor. By using conditional styling, custom search phrases, and disposition actions, you enable the auditor to spend 90% of their time evaluating the risk of the shortcut, rather than 90% of their time navigating the database.
+
