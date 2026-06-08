@@ -1,0 +1,67 @@
+To transition from a functional script to a production-grade pipeline, you must ensure your ingestion system is resilient, observable, and auditable. A production pipeline does not just "run"; it manages exceptions and prevents dirty data from polluting your graph database.
+1. Production Architecture: The Resilient Pipeline
+A robust pipeline uses a "Try-Process-Sink" pattern. If the data conforms to the mapping, it proceeds to the graph; if it fails (due to schema mismatches, missing fields, or data corruption), it is routed to an error sink for analysis.
+2. Implementation: The Production-Grade Pipeline
+This Python structure implements an error-handling sink using a modular class design.
+import json
+import logging
+from typing import Dict, Any
+
+# Configure logging for pipeline observability
+logging.basicConfig(level=logging.INFO, filename='pipeline.log')
+
+class IngestionPipeline:
+    def __init__(self, mapper: Dict[str, Any], error_sink_path: str):
+        self.mapper = mapper
+        self.error_sink = error_sink_path
+
+    def process_record(self, raw_record: Dict[str, Any]):
+        try:
+            # 1. Normalization
+            normalized = {self.mapper.get(k, k): v for k, v in raw_record.items()}
+            
+            # 2. Schema Validation (The "Hard Stop")
+            self._validate_schema(normalized)
+            
+            # 3. Load to Graph
+            return self._load_to_graph(normalized)
+
+        except Exception as e:
+            # 4. Error Handling Sink
+            self._handle_error(raw_record, str(e))
+
+    def _handle_error(self, raw_record: Dict[str, Any], error_msg: str):
+        error_entry = {"record": raw_record, "error": error_msg}
+        with open(self.error_sink, 'a') as f:
+            f.write(json.dumps(error_entry) + '\n')
+        logging.error(f"Pipeline error: {error_msg} | Record: {raw_record}")
+
+    def _validate_schema(self, data: Dict[str, Any]):
+        # Example validation: ensure essential identifier exists
+        if 'identifier' not in data:
+            raise ValueError("Missing mandatory 'identifier' field.")
+
+
+3. Key Components for Production Maturity
+The Error Sink (Dead-Letter Queue): Your error sink should be a JSON-Lines file or a dedicated "Failed Records" database collection. Each entry should include the raw_record and the error_message. This allows you to inspect why a record failed and, once the mapping dictionary is updated, replay the failed records through the pipeline.
+Observability: Integrate a logging framework (logging module) to track throughput and error rates. If your pipeline error rate exceeds a threshold (e.g., 5% of records), the pipeline should trigger an alert for manual intervention.
+Idempotency (Neo4j APOC): In production, use apoc.merge.node inside your _load_to_graph method. This guarantees that re-running the pipeline won't create duplicate nodes if your source data contains overlapping records.
+Schema Registry: Instead of hardcoding your mapper dictionary in the script, store them in a directory of JSON files (/mappings/org_a.json). Your pipeline should look up the appropriate map based on the metadata of the incoming file.
+Strategic Evaluation: The "Audit-Ready" Pipeline
+To fulfill your requirement for a framework that evaluates what they do and why, your pipeline should capture metadata during ingestion:
+Pipeline Stage
+Captured Metadata
+Evaluation Purpose
+Ingestion
+source_file, import_ts
+Tracking data lineage (Auditability).
+Validation
+field_failure_count
+Identifying if the external organization's forms are changing.
+Mapping
+mapping_id_version
+Ensuring reproducibility of your transformation logic.
+
+Next Steps for the Atomic Library
+To make this pipeline "Atomic," you should separate the IngestionPipeline logic from the specific Neo4j connection logic. This allows you to swap your target database (e.g., to a CSV export or a different graph engine) without needing to rewrite your normalization or error-handling procedures.
+
