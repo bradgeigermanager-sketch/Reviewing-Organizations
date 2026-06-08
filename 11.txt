@@ -1,0 +1,47 @@
+To create a self-healing graph, you can utilize APOC (Awesome Procedures on Cypher) to periodically scan your database for "type drift."
+In a production-grade SIS, property types can shift if a mapping pipeline fails or if an external organization changes their data format unexpectedly. A periodic procedure allows you to proactively identify these anomalies before they corrupt your analytical queries.
+1. The Strategy: Schema-Check Procedure
+You will create a periodic_audit procedure that:
+Scans nodes by their Entity label.
+Checks the data type of sensitive properties (e.g., ensuring identifier is always a STRING and dateCreated is always a STRING formatted as a date).
+Labels nodes that fail this check as :INVALID_TYPE.
+2. Implementation: The Audit Script
+You can store this Cypher script in your Atomic Library and register it with the Neo4j apoc.periodic.repeat function.
+// The periodic audit query
+MATCH (n:Entity)
+// Logic: If identifier is not a string, or dateCreated doesn't match expected pattern
+WHERE NOT (n.identifier IS :: STRING) 
+   OR (n.dateCreated IS NOT NULL AND NOT n.dateCreated =~ '\\d{4}-\\d{2}-\\d{2}')
+SET n:INVALID_TYPE,
+    n.audit_flag = 'InconsistentPropertyType',
+    n.flagged_at = datetime()
+RETURN count(n) AS FlaggedNodes;
+
+
+3. Scheduling the Audit
+Once you have defined the query, schedule it to run every hour. This ensures that any data drift is identified near-instantaneously after it is ingested.
+// Register the audit to run every hour (3600 seconds)
+CALL apoc.periodic.repeat(
+  'schema-audit', 
+  "MATCH (n:Entity) WHERE NOT (n.identifier IS :: STRING) SET n:INVALID_TYPE RETURN count(n)", 
+  3600
+);
+
+
+4. Advanced: The "Auto-Repair" Logic
+If you are confident in your correction logic, you can evolve the procedure from a flagging tool to an auto-repair tool.
+For example, if you detect that a dateCreated property was accidentally ingested as an INTEGER (a Unix timestamp) instead of a STRING (ISO date), you can force a cast:
+// Automatically cast timestamp integers back to ISO strings
+MATCH (n:Entity:INVALID_TYPE)
+WHERE n.dateCreated IS :: INTEGER
+SET n.dateCreated = toString(datetime({epochMillis: n.dateCreated})),
+    n:FIXED_TYPE
+REMOVE n:INVALID_TYPE
+
+
+Strategic Audit Principles for SIS
+Decoupled Auditing: Do not run these checks during the high-load ingestion phase. Use the apoc.periodic background scheduler to ensure that your database performance is not impacted.
+The "Quarantine" Pattern: Use the :INVALID_TYPE label as a quarantine zone. In your primary analytics queries, always add a WHERE NOT n:INVALID_TYPE clause. This ensures that even if bad data enters the graph, it cannot skew your downstream analysis or generate misleading reports.
+Alerting: Link the return value of your schema-audit to a logging service. If FlaggedNodes > 0, send a notification to your pipeline administrators. This turns your database into a self-reporting system.
+Key insight: A self-healing graph treats data integrity as an ongoing process, not a one-time validation. By automating these periodic checks, you ensure that the SIS remains a high-integrity repository that can withstand the "entropy" of working with dozens of inconsistent external organizations.
+
