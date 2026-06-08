@@ -1,0 +1,58 @@
+To handle simultaneous versions of external forms, you must move from a static mapping to Version-Aware Routing. In this architecture, the pipeline does not assume the version of an incoming document; instead, it uses the document's metadata or structural fingerprints to select the correct "versioned configuration" from your library.
+1. Versioned Directory Structure
+Update your library to include version identifiers in the folder paths. This allows the pipeline to isolate logic without cross-contaminating different form versions.
+/atomic-library
+  /organizations
+    /org_a
+      /v1
+        mapping.json
+        schema.json
+      /v2
+        mapping.json  # Contains differences for new fields
+        schema.json   # Reflects the updated form structure
+
+
+2. The "Fingerprinting" Pattern
+The biggest challenge is knowing which version you are processing. You can automate this using one of three methods:
+Explicit Metadata: If you control the ingestion (e.g., scanning the documents yourself), append a version tag during the ingestion stage.
+Structural Fingerprinting: If the forms are "blind" inputs, use the jsonschema library as a detector. Attempt to validate the raw record against the v2 schema. If it fails, try v1. The first schema to succeed provides the version_id.
+Unique Feature Detection: Some forms have a "Form ID" or "Revision Date" printed in the corner. Extract this using your Document AI/OCR tool to dynamically select the directory.
+3. Implementation: Version-Aware Registry
+Update your SchemaRegistry class to accept a version parameter.
+class VersionedSchemaRegistry:
+    def __init__(self, library_path):
+        self.library_path = library_path
+
+    def get_assets(self, org_id, version):
+        # Dynamically route to the version-specific folder
+        base_path = os.path.join(self.library_path, "organizations", org_id, version)
+        
+        with open(os.path.join(base_path, "mapping.json"), 'r') as f:
+            mapping = json.load(f)
+        with open(os.path.join(base_path, "schema.json"), 'r') as f:
+            schema = json.load(f)
+            
+        return mapping, schema
+
+
+4. Pipeline Logic: The Versioning Gateway
+Your production pipeline now acts as a router. It identifies the version first, then loads the appropriate assets to process the data.
+def process_incoming_record(raw_record, org_id):
+    # 1. Determine version (Fingerprinting)
+    version = detect_version(raw_record) 
+    
+    # 2. Fetch specific assets for this version
+    mapping, schema = registry.get_assets(org_id, version)
+    
+    # 3. Process as normal
+    normalized = normalize_data(raw_record, mapping)
+    validate_normalized_data(normalized, schema)
+    # ... load to Neo4j
+
+
+Strategic Benefits for SIS
+Zero-Downtime Updates: When an organization releases a "v3" form, you simply drop a new /v3 directory into your library and update your detector. The pipeline immediately begins supporting the new format without requiring code changes or redeployments.
+Regression Persistence: You can keep processing "v1" data from older historical records while simultaneously processing "v2" data from current operations. Your Neo4j database receives normalized nodes regardless of the input format.
+Audit Lineage: By storing the version as a property on every Neo4j node, you maintain a perfect historical record. If you ever discover a bug in your v1 mapping, you can use a Cypher query to find every node in the graph that was created by that version and re-process them.
+Key insight: Schema versioning treats your pipeline as a translator rather than a filter. By isolating logic into versioned directories, you remove the "brittleness" that usually plagues data ingestion, allowing your SIS to grow and evolve alongside the organizations you are mapping.
+
